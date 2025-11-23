@@ -6,12 +6,27 @@ import base64
 import io
 from typing import Any, Dict, List, Optional
 
-import torch
 from PIL import Image
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor  # NOT MoeFor
-#from transformers import Qwen3VLMoeForConditionalGeneration, AutoProcessor - This is only for the MoE Variants!!!
-from qwen_vl_utils import process_vision_info
 import warnings
+
+# Conditional imports for local model support (requires NVIDIA dependencies)
+# These are only imported when provider='local'
+try:
+    import torch
+except ImportError:
+    torch = None
+
+try:
+    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor  # NOT MoeFor
+    #from transformers import Qwen3VLMoeForConditionalGeneration, AutoProcessor - This is only for the MoE Variants!!!
+except ImportError:
+    Qwen3VLForConditionalGeneration = None
+    AutoProcessor = None
+
+try:
+    from qwen_vl_utils import process_vision_info
+except ImportError:
+    process_vision_info = None
 
 try:
     import requests
@@ -37,7 +52,7 @@ class QwenVLAgent:
         self,
         model_name: str = "Qwen/Qwen3-VL-8B-Instruct",
         device_map: str = "auto",
-        dtype: Optional[torch.dtype] = None,
+        dtype: Optional[Any] = None,
         use_flash_attention: bool = False,
         temperature: float = 0.1,
         max_tokens: int = 512,
@@ -104,10 +119,29 @@ Rules:
         self,
         model_name: str,
         device_map: str,
-        dtype: Optional[torch.dtype],
+        dtype: Optional[Any],
         use_flash_attention: bool
     ):
         """Initialize local model from HuggingFace."""
+        # Check for required dependencies
+        if torch is None:
+            raise ImportError(
+                "torch is required for local model provider. Install it with: "
+                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+            )
+        
+        if Qwen3VLForConditionalGeneration is None or AutoProcessor is None:
+            raise ImportError(
+                "transformers is required for local model provider. Install it with: "
+                "pip install git+https://github.com/huggingface/transformers"
+            )
+        
+        if process_vision_info is None:
+            raise ImportError(
+                "qwen_vl_utils is required for local model provider. "
+                "Ensure qwen_vl_utils.py is available in the project directory."
+            )
+        
         logging.info(f"Loading local Qwen3-VL model: {model_name}")
 
         if dtype is None:

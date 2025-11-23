@@ -29,6 +29,9 @@ class QwenVLAgent:
     Supports both local models and OpenAI-compatible API endpoints.
     Uses the official mobile_use function calling format.
     """
+    
+    # Constants
+    MIN_SWIPE_DISTANCE = 0.05  # Minimum swipe distance as fraction of screen
 
     def __init__(
         self,
@@ -333,17 +336,22 @@ Task progress (You have done the following operation on the current device): {hi
                             else:
                                 # Load from path and convert - validate path
                                 import os
-                                if not os.path.isfile(image):
-                                    logging.error(f"Image file not found: {image}")
+                                from pathlib import Path
+                                
+                                try:
+                                    # Use realpath to resolve symlinks and prevent directory traversal
+                                    image_path = Path(image).resolve(strict=True)
+                                    
+                                    # Additional safety: verify it's actually a file
+                                    if not image_path.is_file():
+                                        logging.error(f"Path is not a file: {image_path}")
+                                        continue
+                                    
+                                except (OSError, ValueError, RuntimeError) as e:
+                                    logging.error(f"Invalid image path: {image} - {e}")
                                     continue
                                 
-                                # Prevent directory traversal by resolving path
-                                image_path = os.path.abspath(image)
-                                if not os.path.exists(image_path):
-                                    logging.error(f"Image path does not exist: {image_path}")
-                                    continue
-                                
-                                img = Image.open(image_path)
+                                img = Image.open(str(image_path))
                                 buffered = io.BytesIO()
                                 img.save(buffered, format="PNG")
                                 img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -375,15 +383,15 @@ Task progress (You have done the following operation on the current device): {hi
             endpoint = f"{self.api_base_url}/chat/completions"
             logging.debug(f"Calling API endpoint: {endpoint}")
             
-            # Note: For production use, consider setting verify=True for SSL verification
-            # or provide a path to a CA bundle. For local/development endpoints,
-            # verify may need to be False or a custom certificate path.
+            # SSL certificate verification is enabled by default.
+            # For custom SSL certificates, you can pass a path to a CA bundle file:
+            # verify='/path/to/certfile' or disable with verify=False (not recommended)
             response = requests.post(
                 endpoint,
                 headers=headers,
                 json=payload,
                 timeout=60,
-                verify=True  # Enable SSL certificate verification
+                verify=True  # SSL certificate verification enabled
             )
             
             if response.status_code != 200:
@@ -504,8 +512,8 @@ Task progress (You have done the following operation on the current device): {hi
                 
                 # Validate meaningful swipe distance
                 distance = (dx**2 + dy**2) ** 0.5
-                if distance < 0.05:  # Less than 5% of screen
-                    logging.warning(f"Swipe distance very small: {distance:.3f}")
+                if distance < self.MIN_SWIPE_DISTANCE:
+                    logging.warning(f"Swipe distance very small: {distance:.3f} (min: {self.MIN_SWIPE_DISTANCE})")
                 
                 if abs(dy) > abs(dx):
                     action['direction'] = 'down' if dy > 0 else 'up'

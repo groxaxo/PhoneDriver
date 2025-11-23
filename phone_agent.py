@@ -21,6 +21,9 @@ class PhoneAgent:
     - Tracks context and action history
     """
     
+    # Constants
+    MAX_WAIT_TIME_SECONDS = 30  # Maximum wait time in seconds
+    
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the phone agent.
@@ -381,9 +384,9 @@ class PhoneAgent:
         if wait_time < 0:
             logging.warning(f"Negative wait time: {wait_time}, using 0")
             wait_time = 0
-        elif wait_time > 30:
-            logging.warning(f"Very long wait time: {wait_time}s, clamping to 30s")
-            wait_time = 30
+        elif wait_time > self.MAX_WAIT_TIME_SECONDS:
+            logging.warning(f"Very long wait time: {wait_time}s, clamping to {self.MAX_WAIT_TIME_SECONDS}s")
+            wait_time = self.MAX_WAIT_TIME_SECONDS
         
         logging.info(f"Waiting {wait_time:.1f}s...")
         time.sleep(wait_time)

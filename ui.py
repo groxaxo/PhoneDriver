@@ -55,12 +55,15 @@ def get_default_config():
         "screen_height": 2340,
         "screenshot_dir": "./screenshots",
         "max_retries": 3,
-        "model_name": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "model_name": "Qwen/Qwen3-VL-8B-Instruct",
         "use_flash_attention": False,
         "temperature": 0.1,
         "max_tokens": 512,
         "step_delay": 1.5,
-        "enable_visual_debug": False
+        "enable_visual_debug": False,
+        "provider": "local",
+        "api_base_url": None,
+        "api_key": None
     }
 
 
@@ -238,7 +241,7 @@ def stop_task():
     return "No task running"
 
 
-def apply_settings(screen_width, screen_height, temp, max_tok, step_delay, use_fa2, visual_debug):
+def apply_settings(screen_width, screen_height, temp, max_tok, step_delay, use_fa2, visual_debug, provider, model_name, api_base, api_key):
     """Apply settings changes to config."""
     global current_config
     
@@ -252,6 +255,17 @@ def apply_settings(screen_width, screen_height, temp, max_tok, step_delay, use_f
         config['step_delay'] = float(step_delay)
         config['use_flash_attention'] = use_fa2
         config['enable_visual_debug'] = visual_debug
+        config['provider'] = provider
+        config['model_name'] = model_name if model_name.strip() else "Qwen/Qwen3-VL-8B-Instruct"
+        config['api_base_url'] = api_base if api_base and api_base.strip() else None
+        config['api_key'] = api_key if api_key and api_key.strip() else None
+        
+        # Validate API settings
+        if provider == 'api':
+            if not config['api_base_url']:
+                return "✗ API Base URL is required when using API provider", json.dumps(config, indent=2)
+            if not config['api_key']:
+                return "✗ API Key is required when using API provider", json.dumps(config, indent=2)
         
         if save_config(config):
             current_config = config
@@ -350,6 +364,36 @@ def create_ui():
                             value=current_config['screen_height']
                         )
                 
+                gr.Markdown("### Provider Configuration")
+                
+                with gr.Row():
+                    provider = gr.Radio(
+                        label="Provider Type",
+                        choices=["local", "api"],
+                        value=current_config.get('provider', 'local'),
+                        info="Select 'local' for local models or 'api' for OpenAI-compatible API"
+                    )
+                    model_name = gr.Textbox(
+                        label="Model Name",
+                        value=current_config.get('model_name', 'Qwen/Qwen3-VL-8B-Instruct'),
+                        info="HuggingFace model for local, model ID for API"
+                    )
+                
+                with gr.Row():
+                    api_base_url = gr.Textbox(
+                        label="API Base URL",
+                        value=current_config.get('api_base_url', ''),
+                        placeholder="https://api.openai.com/v1",
+                        info="Required for API provider"
+                    )
+                    api_key = gr.Textbox(
+                        label="API Key",
+                        value=current_config.get('api_key', ''),
+                        type="password",
+                        placeholder="sk-...",
+                        info="Required for API provider"
+                    )
+                
                 gr.Markdown("### Model Parameters")
                 
                 with gr.Row():
@@ -380,7 +424,7 @@ def create_ui():
                 
                 with gr.Row():
                     use_flash_attn = gr.Checkbox(
-                        label="Use Flash Attention 2",
+                        label="Use Flash Attention 2 (Local only)",
                         value=current_config.get('use_flash_attention', False)
                     )
                     visual_debug = gr.Checkbox(
@@ -461,7 +505,11 @@ def create_ui():
                 max_tokens,
                 step_delay,
                 use_flash_attn,
-                visual_debug
+                visual_debug,
+                provider,
+                model_name,
+                api_base_url,
+                api_key
             ],
             outputs=[settings_status, config_editor]
         )

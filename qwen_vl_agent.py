@@ -127,7 +127,8 @@ Rules:
         if torch is None:
             raise ImportError(
                 "torch is required for local model provider. Install it with: "
-                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
+                "pip install torch torchvision torchaudio\n"
+                "For CUDA support, see: https://pytorch.org/get-started/locally/"
             )
         
         if Qwen3VLForConditionalGeneration is None or AutoProcessor is None:

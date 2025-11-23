@@ -331,8 +331,19 @@ Task progress (You have done the following operation on the current device): {hi
                                     "image_url": {"url": image}
                                 })
                             else:
-                                # Load from path and convert
-                                img = Image.open(image)
+                                # Load from path and convert - validate path
+                                import os
+                                if not os.path.isfile(image):
+                                    logging.error(f"Image file not found: {image}")
+                                    continue
+                                
+                                # Prevent directory traversal by resolving path
+                                image_path = os.path.abspath(image)
+                                if not os.path.exists(image_path):
+                                    logging.error(f"Image path does not exist: {image_path}")
+                                    continue
+                                
+                                img = Image.open(image_path)
                                 buffered = io.BytesIO()
                                 img.save(buffered, format="PNG")
                                 img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -364,11 +375,15 @@ Task progress (You have done the following operation on the current device): {hi
             endpoint = f"{self.api_base_url}/chat/completions"
             logging.debug(f"Calling API endpoint: {endpoint}")
             
+            # Note: For production use, consider setting verify=True for SSL verification
+            # or provide a path to a CA bundle. For local/development endpoints,
+            # verify may need to be False or a custom certificate path.
             response = requests.post(
                 endpoint,
                 headers=headers,
                 json=payload,
-                timeout=60
+                timeout=60,
+                verify=True  # Enable SSL certificate verification
             )
             
             if response.status_code != 200:
@@ -442,13 +457,21 @@ Task progress (You have done the following operation on the current device): {hi
                     logging.error(f"Invalid coordinate format: {coord}")
                     return None
                 
+                # Validate coordinate values are numeric
+                try:
+                    x_val = float(coord[0])
+                    y_val = float(coord[1])
+                except (TypeError, ValueError) as e:
+                    logging.error(f"Non-numeric coordinates: {coord} - {e}")
+                    return None
+                
                 # Clamp coordinates to valid range
-                x = max(0, min(999, coord[0]))
-                y = max(0, min(999, coord[1]))
+                x = max(0, min(999, x_val))
+                y = max(0, min(999, y_val))
                 action['coordinates'] = [x / 999.0, y / 999.0]
                 
-                if x != coord[0] or y != coord[1]:
-                    logging.warning(f"Coordinates clamped from ({coord[0]}, {coord[1]}) to ({x}, {y})")
+                if x != x_val or y != y_val:
+                    logging.warning(f"Coordinates clamped from ({x_val}, {y_val}) to ({x}, {y})")
 
             if 'coordinate2' in args:
                 coord2 = args['coordinate2']
@@ -456,13 +479,21 @@ Task progress (You have done the following operation on the current device): {hi
                     logging.error(f"Invalid coordinate2 format: {coord2}")
                     return None
                 
+                # Validate coordinate values are numeric
+                try:
+                    x2_val = float(coord2[0])
+                    y2_val = float(coord2[1])
+                except (TypeError, ValueError) as e:
+                    logging.error(f"Non-numeric coordinate2: {coord2} - {e}")
+                    return None
+                
                 # Clamp coordinates to valid range
-                x2 = max(0, min(999, coord2[0]))
-                y2 = max(0, min(999, coord2[1]))
+                x2 = max(0, min(999, x2_val))
+                y2 = max(0, min(999, y2_val))
                 action['coordinate2'] = [x2 / 999.0, y2 / 999.0]
                 
-                if x2 != coord2[0] or y2 != coord2[1]:
-                    logging.warning(f"Coordinate2 clamped from ({coord2[0]}, {coord2[1]}) to ({x2}, {y2})")
+                if x2 != x2_val or y2 != y2_val:
+                    logging.warning(f"Coordinate2 clamped from ({x2_val}, {y2_val}) to ({x2}, {y2})")
 
             # Handle swipe - convert to direction for compatibility
             if action_type == 'swipe' and 'coordinates' in action and 'coordinate2' in action:

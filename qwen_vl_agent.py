@@ -2,6 +2,8 @@
 import json
 import logging
 import re
+import base64
+import io
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -11,6 +13,11 @@ from transformers import Qwen3VLForConditionalGeneration, AutoProcessor  # NOT M
 from qwen_vl_utils import process_vision_info
 import warnings
 
+try:
+    import requests
+except ImportError:
+    requests = None
+
 # To supress these warnings you can uncomment the following two lines
 # warnings.filterwarnings('ignore', message='.*Flash Efficient attention.*')
 # warnings.filterwarnings('ignore', message='.*Mem Efficient attention.*')
@@ -18,7 +25,8 @@ import warnings
 
 class QwenVLAgent:
     """
-    Vision-Language agent using Qwen3-VL-30B-A3B-Instruct for mobile GUI automation.
+    Vision-Language agent using Qwen3-VL for mobile GUI automation.
+    Supports both local models and OpenAI-compatible API endpoints.
     Uses the official mobile_use function calling format.
     """
 
@@ -30,13 +38,51 @@ class QwenVLAgent:
         use_flash_attention: bool = False,
         temperature: float = 0.1,
         max_tokens: int = 512,
+        provider: str = "local",
+        api_base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> None:
-        """Initialize the Qwen3-VL agent."""
+        """
+        Initialize the Qwen3-VL agent.
+        
+        Args:
+            model_name: Model name (HuggingFace for local, model ID for API)
+            device_map: Device mapping for local models
+            dtype: Data type for local models
+            use_flash_attention: Enable Flash Attention 2 for local models
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            provider: "local" for local models, "api" for OpenAI-compatible API
+            api_base_url: Base URL for API provider (e.g., "https://api.openai.com/v1")
+            api_key: API key for authentication
+        """
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.provider = provider
+        self.api_base_url = api_base_url
+        self.api_key = api_key
+        
+        # Model and processor (only for local)
+        self.model = None
+        self.processor = None
 
-        logging.info(f"Loading Qwen3-VL model: {model_name}")
+        if self.provider == "local":
+            self._init_local_model(model_name, device_map, dtype, use_flash_attention)
+        elif self.provider == "api":
+            self._init_api_provider()
+        else:
+            raise ValueError(f"Unknown provider: {provider}. Must be 'local' or 'api'")
+    
+    def _init_local_model(
+        self,
+        model_name: str,
+        device_map: str,
+        dtype: Optional[torch.dtype],
+        use_flash_attention: bool
+    ):
+        """Initialize local model from HuggingFace."""
+        logging.info(f"Loading local Qwen3-VL model: {model_name}")
 
         if dtype is None:
             dtype = torch.bfloat16
@@ -63,6 +109,24 @@ class QwenVLAgent:
         )
         self.processor = AutoProcessor.from_pretrained(model_name)
         # For MoE Models You need to change to self.model=Qwen3VLMoeForConditionalGeneration.from_pretrained
+        logging.info("Local Qwen3-VL agent initialized successfully")
+    
+    def _init_api_provider(self):
+        """Initialize API provider configuration."""
+        if not self.api_base_url:
+            raise ValueError("api_base_url is required when provider is 'api'")
+        
+        if not self.api_key:
+            raise ValueError("api_key is required when provider is 'api'")
+        
+        if requests is None:
+            raise ImportError("requests library is required for API provider. Install it with: pip install requests")
+        
+        # Validate API endpoint
+        self.api_base_url = self.api_base_url.rstrip('/')
+        logging.info(f"Using API provider at: {self.api_base_url}")
+        logging.info(f"API Model: {self.model_name}")
+        logging.info("API-based Qwen3-VL agent initialized successfully")
         # System prompt matching official format
         self.system_prompt = """# Tools
 
@@ -151,6 +215,16 @@ Task progress (You have done the following operation on the current device): {hi
 
     def _generate_action(self, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Generate an action from the model given messages."""
+        if self.provider == "local":
+            return self._generate_action_local(messages)
+        elif self.provider == "api":
+            return self._generate_action_api(messages)
+        else:
+            logging.error(f"Unknown provider: {self.provider}")
+            return None
+
+    def _generate_action_local(self, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Generate an action using local model."""
         try:
             # Use processor's chat template
             text = self.processor.apply_chat_template(
@@ -212,12 +286,124 @@ Task progress (You have done the following operation on the current device): {hi
             return action
 
         except Exception as e:
-            logging.error(f"Error generating action: {e}", exc_info=True)
+            logging.error(f"Error generating action with local model: {e}", exc_info=True)
+            return None
+    
+    def _generate_action_api(self, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Generate an action using OpenAI-compatible API."""
+        try:
+            # Convert messages to OpenAI format
+            api_messages = []
+            
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", [])
+                
+                # Convert content items
+                api_content = []
+                for item in content:
+                    item_type = item.get("type")
+                    
+                    if item_type == "text":
+                        api_content.append({
+                            "type": "text",
+                            "text": item.get("text", "")
+                        })
+                    elif item_type == "image":
+                        # Convert PIL image to base64
+                        image = item.get("image")
+                        if isinstance(image, Image.Image):
+                            # Convert to base64
+                            buffered = io.BytesIO()
+                            image.save(buffered, format="PNG")
+                            img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                            api_content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{img_base64}"
+                                }
+                            })
+                        elif isinstance(image, str):
+                            # Assume it's already a URL or path
+                            if image.startswith(("http://", "https://", "data:")):
+                                api_content.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": image}
+                                })
+                            else:
+                                # Load from path and convert
+                                img = Image.open(image)
+                                buffered = io.BytesIO()
+                                img.save(buffered, format="PNG")
+                                img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                                api_content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{img_base64}"
+                                    }
+                                })
+                
+                api_messages.append({
+                    "role": role,
+                    "content": api_content
+                })
+            
+            # Make API request
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": self.model_name,
+                "messages": api_messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens
+            }
+            
+            endpoint = f"{self.api_base_url}/chat/completions"
+            logging.debug(f"Calling API endpoint: {endpoint}")
+            
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            if response.status_code != 200:
+                logging.error(f"API request failed: {response.status_code} - {response.text}")
+                return None
+            
+            result = response.json()
+            
+            # Extract response
+            if "choices" not in result or len(result["choices"]) == 0:
+                logging.error("No choices in API response")
+                return None
+            
+            output_text = result["choices"][0]["message"]["content"]
+            logging.debug(f"API output: {output_text}")
+            
+            # Parse action
+            action = self._parse_action(output_text)
+            return action
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"API request error: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            logging.error(f"Error generating action with API: {e}", exc_info=True)
             return None
 
     def _parse_action(self, text: str) -> Optional[Dict[str, Any]]:
         """Parse action from model output in official format."""
         try:
+            # Validate input
+            if not text or not isinstance(text, str):
+                logging.error("Invalid text input for parsing")
+                return None
+            
             # Extract tool_call XML content
             match = re.search(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', text, re.DOTALL)
             if not match:
@@ -239,17 +425,44 @@ Task progress (You have done the following operation on the current device): {hi
                 logging.error("No 'action' in arguments")
                 return None
 
+            # Validate action type
+            valid_actions = ['click', 'swipe', 'type', 'wait', 'terminate']
+            if action_type not in valid_actions:
+                logging.error(f"Invalid action type: {action_type}")
+                return None
+
             # Convert to our internal format
             action: Dict[str, Any] = {'action': action_type}
 
             # Handle coordinates (convert from 999x999 space to normalized 0-1)
+            # Add boundary validation
             if 'coordinate' in args:
                 coord = args['coordinate']
-                action['coordinates'] = [coord[0] / 999.0, coord[1] / 999.0]
+                if not isinstance(coord, (list, tuple)) or len(coord) != 2:
+                    logging.error(f"Invalid coordinate format: {coord}")
+                    return None
+                
+                # Clamp coordinates to valid range
+                x = max(0, min(999, coord[0]))
+                y = max(0, min(999, coord[1]))
+                action['coordinates'] = [x / 999.0, y / 999.0]
+                
+                if x != coord[0] or y != coord[1]:
+                    logging.warning(f"Coordinates clamped from ({coord[0]}, {coord[1]}) to ({x}, {y})")
 
             if 'coordinate2' in args:
                 coord2 = args['coordinate2']
-                action['coordinate2'] = [coord2[0] / 999.0, coord2[1] / 999.0]
+                if not isinstance(coord2, (list, tuple)) or len(coord2) != 2:
+                    logging.error(f"Invalid coordinate2 format: {coord2}")
+                    return None
+                
+                # Clamp coordinates to valid range
+                x2 = max(0, min(999, coord2[0]))
+                y2 = max(0, min(999, coord2[1]))
+                action['coordinate2'] = [x2 / 999.0, y2 / 999.0]
+                
+                if x2 != coord2[0] or y2 != coord2[1]:
+                    logging.warning(f"Coordinate2 clamped from ({coord2[0]}, {coord2[1]}) to ({x2}, {y2})")
 
             # Handle swipe - convert to direction for compatibility
             if action_type == 'swipe' and 'coordinates' in action and 'coordinate2' in action:
@@ -257,6 +470,12 @@ Task progress (You have done the following operation on the current device): {hi
                 end = action['coordinate2']
                 dx = end[0] - start[0]
                 dy = end[1] - start[1]
+                
+                # Validate meaningful swipe distance
+                distance = (dx**2 + dy**2) ** 0.5
+                if distance < 0.05:  # Less than 5% of screen
+                    logging.warning(f"Swipe distance very small: {distance:.3f}")
+                
                 if abs(dy) > abs(dx):
                     action['direction'] = 'down' if dy > 0 else 'up'
                 else:
@@ -266,14 +485,31 @@ Task progress (You have done the following operation on the current device): {hi
             if action_type == 'click':
                 action['action'] = 'tap'  # our internal name
 
-            # Copy other fields
+            # Copy other fields with validation
             if 'text' in args:
-                action['text'] = args['text']
+                text_input = args['text']
+                if not isinstance(text_input, str):
+                    logging.error(f"Invalid text type: {type(text_input)}")
+                    return None
+                action['text'] = text_input
+            
             if 'time' in args:
-                action['waitTime'] = int(float(args['time']) * 1000)  # ms
+                try:
+                    wait_time = float(args['time'])
+                    if wait_time < 0:
+                        logging.warning(f"Negative wait time: {wait_time}, using 0")
+                        wait_time = 0
+                    action['waitTime'] = int(wait_time * 1000)  # ms
+                except (ValueError, TypeError) as e:
+                    logging.error(f"Invalid time value: {args['time']} - {e}")
+                    return None
+            
             if 'status' in args:
-                action['status'] = args['status']
-                action['message'] = f"Task {args['status']}"
+                status = args['status']
+                if status not in ['success', 'failure']:
+                    logging.warning(f"Unexpected status value: {status}")
+                action['status'] = status
+                action['message'] = f"Task {status}"
 
             # Extract thought/action description
             thought_match = re.search(r'Thought:\s*(.+?)(?:\n|$)', text)
@@ -298,7 +534,7 @@ Task progress (You have done the following operation on the current device): {hi
             logging.debug(f"Text: {text}")
             return None
         except Exception as e:
-            logging.error(f"Error parsing action: {e}")
+            logging.error(f"Error parsing action: {e}", exc_info=True)
             logging.debug(f"Text: {text}")
             return None
 

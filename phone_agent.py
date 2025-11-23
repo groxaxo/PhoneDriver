@@ -35,12 +35,15 @@ class PhoneAgent:
             'screen_height': 2340,  # Must match your device
             'screenshot_dir': './screenshots',
             'max_retries': 3,
-            'model_name': 'Qwen/Qwen3-VL-30B-A3B-Instruct',
+            'model_name': 'Qwen/Qwen3-VL-8B-Instruct',
             'use_flash_attention': False,
             'temperature': 0.1,
             'max_tokens': 512,
             'step_delay': 1.5,  # Seconds to wait after each action
             'enable_visual_debug': False,  # Save annotated screenshots
+            'provider': 'local',  # 'local' or 'api'
+            'api_base_url': None,  # API base URL (e.g., 'https://api.openai.com/v1')
+            'api_key': None,  # API key for authentication
         }
         
         self.config = default_config
@@ -67,10 +70,21 @@ class PhoneAgent:
         
         # Initialize Qwen3-VL agent
         logging.info("Initializing Qwen3-VL agent...")
+        
+        # Determine provider settings
+        provider = self.config.get('provider', 'local')
+        api_base_url = self.config.get('api_base_url')
+        api_key = self.config.get('api_key')
+        model_name = self.config.get('model_name', 'Qwen/Qwen3-VL-8B-Instruct')
+        
         self.vl_agent = QwenVLAgent(
+            model_name=model_name,
             use_flash_attention=self.config.get('use_flash_attention', False),
             temperature=self.config['temperature'],
             max_tokens=self.config['max_tokens'],
+            provider=provider,
+            api_base_url=api_base_url,
+            api_key=api_key,
         )
         logging.info("Phone agent ready")
     
@@ -273,8 +287,18 @@ class PhoneAgent:
         if 'coordinates' not in action:
             raise ValueError("Tap action missing coordinates")
         
+        coords = action['coordinates']
+        if not isinstance(coords, (list, tuple)) or len(coords) != 2:
+            raise ValueError(f"Invalid coordinates format: {coords}")
+        
         # Get normalized coordinates
-        norm_x, norm_y = action['coordinates']
+        norm_x, norm_y = coords
+        
+        # Validate normalized coordinates are in expected range
+        if not (0 <= norm_x <= 1 and 0 <= norm_y <= 1):
+            logging.warning(f"Normalized coordinates out of range: ({norm_x:.3f}, {norm_y:.3f})")
+            norm_x = max(0, min(1, norm_x))
+            norm_y = max(0, min(1, norm_y))
         
         # Convert to pixel coordinates
         x = int(norm_x * self.config['screen_width'])
@@ -325,6 +349,14 @@ class PhoneAgent:
         
         text = action['text']
         
+        # Validate text input
+        if not isinstance(text, str):
+            raise ValueError(f"Text must be a string, got {type(text)}")
+        
+        if not text:
+            logging.warning("Empty text in type action, skipping")
+            return
+        
         # Check if we tapped a text field recently
         recent_actions = self.context['previous_actions'][-3:]
         tapped_text_field = any(
@@ -344,6 +376,15 @@ class PhoneAgent:
     def _execute_wait(self, action: Dict[str, Any]):
         """Execute a wait action."""
         wait_time = action.get('waitTime', 1000) / 1000.0  # Convert ms to seconds
+        
+        # Validate wait time
+        if wait_time < 0:
+            logging.warning(f"Negative wait time: {wait_time}, using 0")
+            wait_time = 0
+        elif wait_time > 30:
+            logging.warning(f"Very long wait time: {wait_time}s, clamping to 30s")
+            wait_time = 30
+        
         logging.info(f"Waiting {wait_time:.1f}s...")
         time.sleep(wait_time)
     

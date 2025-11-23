@@ -13,6 +13,7 @@ A Python-based mobile automation agent that uses Qwen3-VL vision-language models
 - 🎯 **Natural language tasks**: Describe what you want in plain English
 - 🖥️ **Web UI**: Built-in Gradio interface for easy control
 - 📊 **Real-time feedback**: Live screenshots and execution logs
+- 🌐 **Flexible providers**: Use local models or OpenAI-compatible API endpoints
 
 ## Requirements
 
@@ -65,35 +66,62 @@ You should see your device listed.
 
 ## Configuration
 
-### Model Selection
+### Provider Selection
 
-Edit `qwen_vl_agent.py` to choose your model:
+PhoneDriver supports two modes:
 
-```python
-# For 4B model
-model_name: str = "Qwen/Qwen3-VL-4B-Instruct"
+#### 1. Local Model (Default)
 
-# For 8B model 
-#model_name: str = "Qwen/Qwen3-VL-8B-Instruct"
+Edit `config.json` to use a local model:
+
+```json
+{
+  "provider": "local",
+  "model_name": "Qwen/Qwen3-VL-8B-Instruct",
+  "use_flash_attention": false,
+  ...
+}
 ```
 
-### If you want to try a Qwen3 MoE model, you need to change the import in `qwen_vl_agent.py` to the following:
+Available local models:
+- `Qwen/Qwen3-VL-4B-Instruct` - Smaller, faster
+- `Qwen/Qwen3-VL-8B-Instruct` - Recommended balance
+- `Qwen/Qwen3-VL-30B-A3B-Instruct` - Highest quality
+
+#### 2. OpenAI-Compatible API
+
+Use any OpenAI-compatible API endpoint:
+
+```json
+{
+  "provider": "api",
+  "model_name": "gpt-4-vision-preview",
+  "api_base_url": "https://api.openai.com/v1",
+  "api_key": "sk-your-api-key-here",
+  ...
+}
+```
+
+This works with:
+- OpenAI API
+- Azure OpenAI
+- Local inference servers (vLLM, Text Generation WebUI, etc.)
+- Any OpenAI-compatible endpoint
+
+### MoE Models (Local Only)
+
+If you want to try a Qwen3 MoE model, you need to change the import in `qwen_vl_agent.py`:
 
 ```python
-#from transformers import Qwen3VLForConditionalGeneration, AutoProcessor  - Comment this import out, it is for the Dense models
+#from transformers import Qwen3VLForConditionalGeneration, AutoProcessor  - Comment this import out
 # Uncomment the import below for the MoE Variants!!!
 from transformers import Qwen3VLMoeForConditionalGeneration, AutoProcessor
 ```
 
-You will also need to change line 61: 
+And update the model initialization (line ~92):
 
 ```python
-        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-```
-Change it to:
-
-```python
-        self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+self.model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
 ```
 
 ### Screen Resolution
@@ -151,11 +179,23 @@ python phone_agent.py "Open the camera app"
 
 Key settings in `config.json`:
 
+### Provider Settings
+- `provider`: Provider type - "local" or "api" (default: "local")
+- `model_name`: Model identifier (HuggingFace path for local, model name for API)
+- `api_base_url`: API endpoint URL (required for API provider)
+- `api_key`: API authentication key (required for API provider)
+
+### Model Parameters
 - `temperature`: Model creativity (0.0-1.0, default: 0.1)
 - `max_tokens`: Max response length (default: 512)
+- `use_flash_attention`: Enable Flash Attention 2 for faster local inference
+
+### Execution Settings
 - `step_delay`: Wait time between actions in seconds (default: 1.5)
 - `max_retries`: Maximum retry attempts (default: 3)
-- `use_flash_attention`: Enable Flash Attention 2 for faster inference
+- `screen_width`: Device screen width in pixels
+- `screen_height`: Device screen height in pixels
+- `enable_visual_debug`: Save annotated screenshots for debugging
 
 ## Troubleshooting
 

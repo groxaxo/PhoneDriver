@@ -17,11 +17,19 @@ A Python-based mobile automation agent that uses Qwen3-VL vision-language models
 
 ## Requirements
 
+### Core Requirements (All Users)
 - Python 3.10+
 - Android device with USB debugging & Developer Mode enabled
 - ADB (Android Debug Bridge) installed
-- GPU with sufficient VRAM (Tested on 24gb GPU with Qwen3-VL-8B Model)
-- The Repo is set to use the Dense Qwen3-VL 4B/8B Model which performs very well. To swap to an MoE model, see the configuration section below 
+
+### Additional Requirements (Local Model Users Only)
+- **GPU with sufficient VRAM** (Tested on 24gb GPU with Qwen3-VL-8B Model)
+- **PyTorch with CUDA support**
+- **Transformers library**
+- The Repo is set to use the Dense Qwen3-VL 4B/8B Model which performs very well. To swap to an MoE model, see the configuration section below
+
+### API Provider Users
+- **No GPU or NVIDIA dependencies required** - works with external API endpoints (OpenAI, Azure, vLLM, etc.) 
 
 ## Installation
 
@@ -44,9 +52,24 @@ Create a Virtual Enviornment
 python -m venv phonedriver
 source phonedriver/bin/activate
 ```
-Install Python Deps
+
+#### Option A: For API Provider (OpenAI-compatible APIs)
+
+If you plan to use external API providers (recommended for users without NVIDIA GPUs), install minimal dependencies:
 
 ```bash
+pip install pillow gradio requests
+```
+
+#### Option B: For Local Model Provider (Requires NVIDIA GPU)
+
+If you plan to run models locally on your GPU, install all dependencies including PyTorch and transformers:
+
+```bash
+# Install PyTorch (adjust CUDA version as needed)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Install transformers from source (required for Qwen3-VL)
 pip install git+https://github.com/huggingface/transformers
 # pip install transformers==4.57.0 # currently, V4.57.0 is not released
 
@@ -70,7 +93,9 @@ You should see your device listed.
 
 PhoneDriver supports two modes:
 
-#### 1. Local Model (Default)
+#### 1. Local Model (Requires NVIDIA GPU)
+
+**Requirements:** PyTorch, transformers, CUDA-enabled GPU
 
 Edit `config.json` to use a local model:
 
@@ -88,7 +113,9 @@ Available local models:
 - `Qwen/Qwen3-VL-8B-Instruct` - Recommended balance
 - `Qwen/Qwen3-VL-30B-A3B-Instruct` - Highest quality
 
-#### 2. OpenAI-Compatible API
+#### 2. OpenAI-Compatible API (No GPU Required)
+
+**Requirements:** Only basic Python libraries (pillow, gradio, requests)
 
 Use any OpenAI-compatible API endpoint:
 
